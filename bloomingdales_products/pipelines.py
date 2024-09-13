@@ -21,17 +21,24 @@ class BloomingdalesExcelPipeline:
         return item
 
     def close_spider(self, spider):
-        # Convert the items to a DataFrame
+    # Convert the items to a DataFrame
         df = pd.DataFrame(self.items)
 
-        # Ensure column order
-        columns = [
+        # Ensure all required columns exist, fill missing columns with None (or any default value)
+        required_columns = [
             'website_name', 'competence_date', 'brand', 'product_code', 'country_code', 'currency_code',
             'full_price', 'price', 'category1_code', 'category2_code', 'category3_code', 'title', 'imageurl', 'itemurl'
         ]
 
-        df = df[columns]
+        # Add missing columns with None if they don't exist in the DataFrame
+        for column in required_columns:
+            if column not in df.columns:
+                df[column] = None
+
+        # Reorder the DataFrame columns
+        df = df[required_columns]
 
         # Export to Excel
         df.to_excel('bloomingdales_products.xlsx', index=False)
         logger.info('Data has been successfully exported to bloomingdales_products.xlsx')
+
