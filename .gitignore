@@ -144,7 +144,8 @@ data
 *.csv
 *.xlsx
 *.pdf
-
+*.ipynb
+ 
 entities/
 intents/
 data_n/

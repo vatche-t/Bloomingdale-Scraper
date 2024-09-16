@@ -76,12 +76,23 @@ class BloomingdalesSpider(scrapy.Spider):
             else:
                 stars, reviews = None, None
 
-            # Use CSS for the image URL
+            # Use CSS for the image URL (First attempt)
             image_url = product.css('div.v-scroller ul li.active img::attr(data-src)').get()
 
-            # If image URL is missing, try the fallback selector
+            # If image URL is missing, try different selectors (Fallbacks)
             if not image_url:
                 image_url = product.css('div.v-scroller ul li.active picture source:nth-child(2)::attr(srcset)').get()
+
+            if not image_url:
+                image_url = product.css('div.v-scroller ul li.active picture source:nth-child(1)::attr(srcset)').get()
+
+            if not image_url:
+                image_url = product.css('div.v-scroller ul li.active img::attr(src)').get()
+
+            if not image_url:
+                logger.warning(f"No image URL found for product: {product_name} at {product_url}")
+            else:
+                logger.info(f"Found image URL for product: {product_name} -> {image_url}")
 
             # Extract price details using get_price method
             full_price, discounted_price = self.get_price(product)
