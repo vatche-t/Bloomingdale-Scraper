@@ -143,7 +143,9 @@ data
 *.model
 *.csv
 *.xlsx
-
+*.pdf
+*.ipynb
+ 
 entities/
 intents/
 data_n/

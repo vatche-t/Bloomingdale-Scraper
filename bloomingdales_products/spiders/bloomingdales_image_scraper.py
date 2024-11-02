@@ -1,7 +1,10 @@
 import scrapy
 import pandas as pd
+<<<<<<< HEAD
 import os
 import shutil
+=======
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
 import time
 from scrapy import signals
 from scrapy.crawler import CrawlerProcess
@@ -13,16 +16,26 @@ class BloomingdalesImageScraper(scrapy.Spider):
     allowed_domains = ["bloomingdales.com"]
 
     custom_settings = {
+<<<<<<< HEAD
         'CONCURRENT_REQUESTS': 16,
         'RETRY_TIMES': 5,
         'DOWNLOAD_DELAY': 1.0,
         'AUTOTHROTTLE_ENABLED': True,
         'HTTPCACHE_ENABLED': True,
         'LOG_LEVEL': 'DEBUG'
+=======
+        'CONCURRENT_REQUESTS': 16,       # Moderate concurrency to balance load
+        'RETRY_TIMES': 5,                # Retry failed requests up to 5 times
+        'DOWNLOAD_DELAY': 1.0,           # Add a longer delay to ensure page load
+        'AUTOTHROTTLE_ENABLED': True,    # Enable Scrapy's built-in throttling
+        'HTTPCACHE_ENABLED': True,       # Enable caching to reuse page content
+        'LOG_LEVEL': 'DEBUG'             # Set log level to debug for detailed output
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+<<<<<<< HEAD
 
         # Create backup folder if it doesn't exist and save a copy of the current CSV and Excel files
         if not os.path.exists('data/backup'):
@@ -56,19 +69,53 @@ class BloomingdalesImageScraper(scrapy.Spider):
             logger.warning("No products to scrape. Stopping spider.")
             return
 
+=======
+        
+        try:
+            self.df = pd.read_excel('bloomingdales_products.xlsx')
+            logger.info(f"Loaded Excel file with {len(self.df)} total products.")
+        except Exception as e:
+            logger.error(f"Error loading Excel file: {e}")
+            return
+        
+        self.products_to_scrape = self.df[self.df['imageurl'].isnull() | self.df['imageurl'].eq('')]
+        logger.info(f"Found {len(self.products_to_scrape)} products without an image URL to scrape.")
+        
+        if self.products_to_scrape.empty:
+            logger.warning("No products with missing image URLs. Nothing to scrape.")
+        else:
+            logger.info(f"Preparing to scrape {len(self.products_to_scrape)} products.")
+
+    def start_requests(self):
+        base_url = "https://www.bloomingdales.com"
+        
+        if self.products_to_scrape.empty:
+            logger.warning("No products to scrape. Stopping spider.")
+            return
+        
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
         for index, row in self.products_to_scrape.iterrows():
             product_url = row['itemurl']
             product_code = row['product_code']
             
             logger.debug(f"Processing product: {product_code}, URL: {product_url}")
+<<<<<<< HEAD
 
+=======
+            
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
             if not product_url.startswith('http'):
                 product_url = base_url + product_url
                 logger.debug(f"Updated relative URL to: {product_url}")
 
             yield scrapy.Request(
+<<<<<<< HEAD
                 url=product_url,
                 callback=self.parse,
+=======
+                url=product_url, 
+                callback=self.parse, 
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
                 meta={'index': index, 'product_code': product_code},
                 errback=self.handle_error
             )
@@ -77,26 +124,46 @@ class BloomingdalesImageScraper(scrapy.Spider):
         request = failure.request
         product_code = request.meta.get('product_code', 'Unknown')
         logger.error(f"Network error or invalid response for product {product_code}. Details: {failure}")
+<<<<<<< HEAD
         if not self.df.empty:
             self.df.at[request.meta['index'], 'imageurl'] = None
+=======
+        self.df.at[request.meta['index'], 'imageurl'] = None
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
 
     def parse(self, response):
         index = response.meta['index']
         product_code = response.meta['product_code']
 
+<<<<<<< HEAD
+=======
+        # Initial selectors for image scraping
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
         selectors = [
             'picture.main-picture > img::attr(src)',
             'picture.main-picture > source::attr(srcset)',
             '//picture[@class="main-picture"]/img/@src',
             '//picture[@class="main-picture"]/source[1]/@srcset',
             '//div[@class="picture-container"]/picture/source[@media="(max-width: 599px)"]/@srcset',
+<<<<<<< HEAD
             '//div[@class="picture-container"]/picture/source[@media="(min-width: 600px and max-width: 1023px)"]/@srcset',
+=======
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 600px) and (max-width: 1023px)"]/@srcset',
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
             '//div[@class="picture-container"]/picture/source[@media="(min-width: 1024px) and (max-width: 1279px)"]/@srcset',
             '//div[@class="picture-container"]/picture/source[@media="(min-width: 1280px) and (max-width: 1599px)"]/@srcset',
             '//div[@class="picture-container"]/picture/source[@media="(min-width: 1600px)"]/@srcset',
         ]
+<<<<<<< HEAD
         image_urls = self.extract_images(response, selectors)
 
+=======
+
+        # Retry mechanism
+        image_urls = self.extract_images(response, selectors)
+        
+        # If no images were found, wait for 10 seconds and retry
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
         if not image_urls:
             logger.warning(f"No image URLs found for product {product_code}. Retrying after 10 seconds...")
             time.sleep(10)
@@ -105,11 +172,20 @@ class BloomingdalesImageScraper(scrapy.Spider):
         if not image_urls:
             logger.warning(f"Still no image URLs found for product {product_code} after retry.")
 
+<<<<<<< HEAD
         if not self.df.empty:
             self.df.at[index, 'imageurl'] = ', '.join(image_urls) if image_urls else None
 
     def extract_images(self, response, selectors):
         image_urls = []
+=======
+        # Save all found image URLs as a comma-separated string
+        self.df.at[index, 'imageurl'] = ', '.join(image_urls) if image_urls else None
+
+    def extract_images(self, response, selectors):
+        image_urls = []
+
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
         try:
             for selector in selectors:
                 if '::attr' in selector:
@@ -120,6 +196,7 @@ class BloomingdalesImageScraper(scrapy.Spider):
                 if image_url:
                     logger.info(f"Image URL found: {image_url}")
                     image_urls.append(image_url)
+<<<<<<< HEAD
         except Exception as e:
             logger.error(f"Error extracting images: {e}")
         return image_urls
@@ -156,13 +233,31 @@ class BloomingdalesImageScraper(scrapy.Spider):
                 logger.info("All products have image URLs. No need to retry.")
         except Exception as e:
             logger.error(f"Error checking or retrying missing URLs: {e}")
+=======
+
+        except Exception as e:
+            logger.error(f"Error extracting images: {e}")
+
+        return image_urls
+
+    def closed(self, reason):
+        try:
+            self.df.to_excel('bloomingdales_products_updated.xlsx', index=False)
+            logger.info("Scraping complete. Data saved to bloomingdales_products_updated.xlsx.")
+        except Exception as e:
+            logger.error(f"Error saving updated Excel file: {e}")
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
 
 if __name__ == "__main__":
     process = CrawlerProcess(settings={
         'LOG_LEVEL': 'DEBUG',
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
     })
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
     dispatcher.connect(lambda: process.stop(), signal=signals.spider_closed)
     process.crawl(BloomingdalesImageScraper)
     process.start()

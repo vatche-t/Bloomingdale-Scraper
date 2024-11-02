@@ -12,7 +12,7 @@ class BloomingdalesExcelPipeline:
         return item
 
     def close_spider(self, spider):
-        # Convert the items to a DataFrame
+    # Convert the items to a DataFrame
         df = pd.DataFrame(self.items)
 
         # Ensure all required columns exist, fill missing columns with None (or any default value)
@@ -24,6 +24,7 @@ class BloomingdalesExcelPipeline:
             if column not in df.columns:
                 df[column] = None
 
+<<<<<<< HEAD
         # Reorder the DataFrame columns
         df = df[required_columns]
 
@@ -48,3 +49,17 @@ class BloomingdalesExcelPipeline:
         df.to_excel(excel_path, index=False)
 
         logger.info('Data has been successfully exported to CSV and Excel files without duplicates.')
+=======
+        # Add missing columns with None if they don't exist in the DataFrame
+        for column in required_columns:
+            if column not in df.columns:
+                df[column] = None
+
+        # Reorder the DataFrame columns
+        df = df[required_columns]
+
+        # Export to Excel
+        df.to_excel('bloomingdales_products.xlsx', index=False)
+        logger.info('Data has been successfully exported to bloomingdales_products.xlsx')
+
+>>>>>>> a427959e3d1da05a2f05a0565a6a8c0793d4cbe5
