@@ -2,7 +2,11 @@ import scrapy
 import pandas as pd
 from datetime import datetime
 from loguru import logger
+import os
 import random
+import re  # Import regex for text parsing
+from scrapy import signals
+from pydispatch import dispatcher
 
 # Configure logging with Loguru
 logger.add("logs/scraper.log", rotation="1 MB", level="DEBUG")
@@ -12,19 +16,20 @@ class BloomingdalesSpider(scrapy.Spider):
     name = "bloomingdales"
     allowed_domains = ["bloomingdales.com"]
 
-    # Main URLs to start scraping
+    # Ensure the data directory exists
+    if not os.path.exists('data'):
+        os.makedirs('data')
+
+    # Main URLs to start scraping (Designer Brands only)
     start_urls = [
-        "https://www.bloomingdales.com/shop/womens-apparel?id=2910",  # Women
-        "https://www.bloomingdales.com/shop/mens?id=3864",  # Men
-        "https://www.bloomingdales.com/shop/kids?id=3866",  # Kids
         "https://www.bloomingdales.com/shop/all-designers?id=1001351"  # Designers
     ]
 
     custom_settings = {
-        'DOWNLOAD_DELAY': random.uniform(1, 3),  # Delay between requests
+        'DOWNLOAD_DELAY': random.uniform(1, 3),  # Control the number of concurrent requests
         'FEEDS': {
-            'data/bloomingdales_products.json': {
-                'format': 'json',
+            'data/bloomingdales_products.csv': {
+                'format': 'csv',
                 'encoding': 'utf8',
                 'store_empty': False,
                 'indent': 4,
@@ -32,187 +37,175 @@ class BloomingdalesSpider(scrapy.Spider):
         },
     }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.failed_image_products = []  # Store products with failed image URLs
+        self.all_scraped_items = []  # Store all scraped items for later processing
+        dispatcher.connect(self.spider_closed, signals.spider_closed)  # Connect signal to close spider
+
     def parse(self, response):
-        """Initial parsing logic to extract category and brand links."""
-        
-        if "all-designers" in response.url:
-            # Handle designer brands
-            brand_links = response.xpath('//div[@class="brand-items-grid"]//ul/li/a/@href').getall()
-            brand_names = response.xpath('//div[@class="brand-items-grid"]//ul/li/a/text()').getall()
+        """Initial parsing logic to extract brand links."""
+        brand_links = response.xpath('//div[@class="brand-items-grid"]//ul/li/a/@href').getall()
+        brand_names = response.xpath('//div[@class="brand-items-grid"]//ul/li/a/text()').getall()
 
-            if not brand_links:
-                logger.warning(f"No brand links found on {response.url}")
-            else:
-                logger.info(f"Found {len(brand_links)} brand links on {response.url}")
-
-            for link, brand_name in zip(brand_links, brand_names):
-                logger.info(f"Scraping brand: {brand_name}")
-                yield response.follow(link, self.parse_designer_brand, meta={'brand_name': brand_name})
-
+        if not brand_links:
+            logger.warning(f"No brand links found on {response.url}")
         else:
-            # Regular category extraction (Women, Men, Kids)
-            category = response.xpath("//title/text()").get().strip().split(' ')[0]
-            category_links = response.css(
-                "#app-wrapper > div > div.nav-padding-top.grid-x.grid-margin-x.middle-container > div.cell.large-3.small-12.medium-12 > div:nth-child(2) > div > div > ul > li > a"
-            )
+            logger.info(f"Found {len(brand_links)} brand links on {response.url}")
 
-            if not category_links:
-                logger.warning(f"No category links found on {response.url}")
-            else:
-                logger.info(f"Found {len(category_links)} category links on {response.url}")
-
-            for link in category_links:
-                category_name = link.css("::text").get().strip()
-                category_url = link.css("::attr(href)").get()
-
-                if "Shop All" not in category_name and "all-women" not in category_url:
-                    logger.info(f"Found category: {category_name} - {category_url}")
-                    yield response.follow(category_url, self.parse_category, meta={'category_1': category, 'category_2': category_name})
+        for link, brand_name in zip(brand_links, brand_names):  # Limit to 5 for testing
+            logger.info(f"Scraping brand: {brand_name}")
+            yield response.follow(link, self.parse_designer_brand, meta={'brand_name': brand_name})
 
     def parse_designer_brand(self, response):
         """Extract products for designer brands and handle pagination."""
-        
         brand_name = response.meta.get('brand_name')
-        logger.info(f"Scraping products for brand {brand_name}")
 
-        # Adjusting the CSS selector for designer product extraction
-        product_elements = response.css('#app-wrapper > div > div:nth-child(3) > ul > li')
+        # Extract total number of products from the page (for logging purposes only)
+        total_products_text = response.css('#app-wrapper > div > div:nth-child(3) > div.results-found-message.total-results-found > div > span::text').get()
         
-        if not product_elements:
-            logger.warning(f"No products found for brand {brand_name} on {response.url}")
+        # Clean the extracted text to get only the number of products (e.g., remove '(26 items)')
+        if total_products_text:
+            total_products_cleaned = re.sub(r'\D', '', total_products_text)  # Remove non-numeric characters
+            total_products = int(total_products_cleaned) if total_products_cleaned.isdigit() else 0
         else:
-            logger.info(f"Found {len(product_elements)} products for brand {brand_name}")
+            total_products = 0
 
+        logger.info(f"Total products listed for {brand_name}: {total_products}")
+
+        # Scrape products on the current page
+        product_elements = response.css('#app-wrapper > div > div:nth-child(3) > ul > li')
+        scraped_products_count = len(product_elements)
+        logger.info(f"Scraped {scraped_products_count} products on current page for {brand_name}")
+
+        # Check if there are zero products; if so, skip pagination and go to the next brand
+        if scraped_products_count == 0:
+            logger.warning(f"No products found on page {response.url} for {brand_name}. Moving to the next brand.")
+            return  # Skip pagination and move to the next brand
+
+        # Scrape each product on the current page
         for product in product_elements:
             product_url = product.css('div.product-description.margin-top-xxs div:nth-child(1) a::attr(href)').get()
             product_name = product.css('div.product-description.margin-top-xxs div:nth-child(1) a div.product-name::text').get()
-            brand = brand_name  # The brand name is passed through meta, and doesn't need to be scraped
 
-            # Use CSS for the image URL
+            bestseller_selector = product.css('div.eyebrow.flexText::text').get()
+            best_seller_status = True if bestseller_selector and "Best Seller" in bestseller_selector else False
+
+            rating_info = product.css('div.reviewlet-spacing div fieldset::attr(aria-label)').get()
+            stars, reviews = self.extract_rating_and_reviews(rating_info) if rating_info else (None, None)
+
             image_url = product.css('div.v-scroller ul li.active img::attr(data-src)').get()
-
-            # If image URL is missing, try the fallback selector
             if not image_url:
-                image_url = product.css('div.v-scroller ul li.active picture source:nth-child(2)::attr(srcset)').get()
+                image_url = self.extract_image_url(product, response)
 
-            # Extract price details using get_price method
             full_price, discounted_price = self.get_price(product)
-
-            # Extract Product ID correctly
             product_code = product_url.split("?ID=")[1].split("&")[0] if product_url else None
 
-            # Create item for pipeline
             if product_url:
-                yield {
+                item = {
                     'website_name': 'www.bloomingdales.com',
                     'competence_date': datetime.now().strftime('%Y-%m-%d'),
-                    'brand': brand,
+                    'brand': brand_name,
                     'product_code': product_code,
                     'country_code': 'USA',
                     'currency_code': 'USD',
-                    'full_price': full_price if full_price else None,
-                    'price': discounted_price if discounted_price else None,
-                    'category1_code': "Designers",
-                    'category2_code': brand_name,
-                    'category3_code': None,  # Placeholder for category 3 code, adjust if needed
+                    'full_price': full_price,
+                    'price': discounted_price,
+                    'category1_code': stars,
+                    'category2_code': reviews,
+                    'category3_code': best_seller_status,
                     'title': product_name.strip() if product_name else None,
                     'imageurl': image_url,
                     'itemurl': response.urljoin(product_url)
                 }
+                self.all_scraped_items.append(item)
+                yield item
 
-        # Handle pagination for the brand's product pages
-        next_page = response.css('#canvas > div.pagination-wrapper nav > ul.pagination > li:nth-child(3) > a::attr(href)').get()
-        if next_page:
-            logger.info(f"Scraping next page for brand {brand_name}")
-            yield response.follow(next_page, self.parse_designer_brand, meta={'brand_name': brand_name})
+        # Pagination logic: ensure the spider attempts to scrape up to 10 pages
+        current_page = response.meta.get('current_page', 1)
+        if current_page < 7:  # Scrape up to 10 pages
+            next_page = current_page + 1
+            next_page_url = re.sub(r'(buy/[^?]+)(\?)', rf'\1/Pageindex/{next_page}\2', response.url)
+
+            logger.info(f"Scraping page {next_page} for brand {brand_name}")
+            yield response.follow(next_page_url, self.parse_designer_brand, meta={'brand_name': brand_name, 'current_page': next_page})
         else:
-            logger.info(f"No more pages to scrape for brand {brand_name}")
+            logger.info(f"Reached the maximum of 7 pages for {brand_name}. Moving to the next brand.")
 
-    def parse_category(self, response):
-        """Extract products on the page and handle pagination."""
-        
-        category_1 = response.meta.get('category_1')
-        category_2 = response.meta.get('category_2')
 
-        product_elements = response.css('#canvas > ul > li')
-        logger.info(f"Found {len(product_elements)} products in category {category_2}")
 
-        for product in product_elements:
-            product_url = product.css('div > div > a::attr(href)').get()
-            brand = product.css('div.product-brand.heavy::text').get()
-            product_name = product.css('div.product-name::text').get()
+    def extract_image_url(self, product, response):
+        selectors = [
+            'picture.main-picture > img::attr(src)',
+            'picture.main-picture > source::attr(srcset)',
+            '//picture[@class="main-picture"]/img/@src',
+            '//picture[@class="main-picture"]/source[1]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(max-width: 599px)"]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 600px) and (max-width: 1023px)"]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 1024px) and (max-width: 1279px)"]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 1280px) and (max-width: 1599px)"]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 1600px)"]/@srcset',
+            '#product-thumbnail-5096784 > a > div > div > div > div > div > div.v-scroller > ul > li.active.cell.small-12.slideshow-item > div > picture > img::attr(src)',
+            '/html/body/div[3]/main/div/div[3]/ul/li[1]/div/div/div[1]/div/a/div/div/div/div/div/div[2]/ul/li[2]/div/picture/img/@src',
+            '/html/body/div[3]/main/div/div[3]/ul/li[1]/div/div/div[1]/div/a/div/div/div/div/div/div[2]/ul/li[2]/div/picture/source[2]/@srcset',
+            '#product-thumbnail-5096784 > a > div > div > div > div > div > div.v-scroller > ul > li.active.cell.small-12.slideshow-item > div > picture > source:nth-child(2)::attr(srcset)',
+            '/html/body/div[3]/main/div/div[3]/ul/li[1]/div/div/div[1]/div/a/div/div/div/div/div/div[2]/ul/li[2]/div/picture/source[1]/@srcset'
+        ]
+        image_url = None
+        for selector in selectors:
+            if '::attr' in selector:
+                image_url = response.css(selector).get()
+            else:
+                image_url = response.xpath(selector).get()
+            if image_url:
+                logger.info(f"Image URL found: {image_url}")
+                break
+        return image_url
 
-            # Use the provided selector for the image URL
-            image_url = product.css('div.v-scroller ul li.active img::attr(data-src)').get()
-
-            # Extract price details using get_price method
-            full_price, discounted_price = self.get_price(product)
-
-            # Extract Product ID correctly
-            product_code = product_url.split("?ID=")[1].split("&")[0] if product_url else None
-
-            # Create item for pipeline
-            if product_url:
-                yield {
-                    'website_name': 'www.bloomingdales.com',
-                    'competence_date': datetime.now().strftime('%Y-%m-%d'),
-                    'brand': brand,
-                    'product_code': product_code,
-                    'country_code': 'USA',
-                    'currency_code': 'USD',
-                    'full_price': full_price if full_price else None,
-                    'price': discounted_price if discounted_price else None,
-                    'category1_code': category_1,
-                    'category2_code': category_2,
-                    'category3_code': None,  # Placeholder for the category 3 code, adjust if needed
-                    'title': product_name.strip() if product_name else None,
-                    'imageurl': image_url,
-                    'itemurl': response.urljoin(product_url)
-                }
-
-        # Handle pagination
-        next_page = response.css('#canvas > div.pagination-wrapper nav > ul.pagination > li:nth-child(3) > a::attr(href)').get()
-        if next_page:
-            yield response.follow(next_page, self.parse_category, meta={'category_1': category_1, 'category_2': category_2})
-        else:
-            logger.info(f"No more pages to scrape for category {category_2}")
+    def extract_rating_and_reviews(self, rating_text):
+        pattern = re.compile(r"Rated (\d+\.?\d*) stars with (\d+) reviews")
+        match = pattern.search(rating_text)
+        if match:
+            return float(match.group(1)), int(match.group(2))
+        return None, None
 
     def get_price(self, product):
-        """Extract full price and discounted price from product element using both CSS and XPath."""
-        
         full_price = discounted_price = None
-
-        # First, use XPath to check if a discounted price ("Now" or "Sale") exists
         discount_price_text = product.xpath('.//div[@class="show-percent-off"]/span/span[contains(text(),"Now") or contains(text(),"Sale")]/text()').get()
-        
-        # If we find a "Now" or "Sale" price, extract both the discounted price and the full price
         if discount_price_text:
-            # Extract the discounted price from the sibling span
             discounted_price_xpath = product.xpath('.//div[@class="show-percent-off"]/span[1]/text()').get()
-            if discounted_price_xpath:
-                discounted_price = self.convert_price_to_float(discounted_price_xpath)
-
-            # Now, extract the full price (strikethrough price) using a different XPath
+            discounted_price = self.convert_price_to_float(discounted_price_xpath)
             full_price_xpath = product.xpath('.//div[@class="pricing"]//span[contains(@class,"price-strike")]/text()').get()
-            if full_price_xpath:
-                full_price = self.convert_price_to_float(full_price_xpath)
+            full_price = self.convert_price_to_float(full_price_xpath)
         else:
-            # If no discounted price, get the regular full price
             full_price_xpath = product.xpath('.//div[@class="pricing"]//span[contains(@class,"price-reg")]/text()').get()
-            if full_price_xpath:
-                full_price = self.convert_price_to_float(full_price_xpath)
-
-        logger.debug(f"Full Price: {full_price}, Discounted Price: {discounted_price}")
-
+            full_price = self.convert_price_to_float(full_price_xpath)
         return full_price, discounted_price
 
     def convert_price_to_float(self, price_str):
-        """Convert price string to float."""
         if not price_str:
             return None
         try:
             price_str = price_str.replace("$", "").replace(",", "").strip()
-            return float(price_str.split("-")[0].strip())  # Handle price ranges
+            return float(price_str.split("-")[0].strip())
         except ValueError:
             logger.error(f"Error converting price to float: {price_str}")
             return None
+      
+        
+
+    def spider_closed(self, spider):
+        """Runs when the spider is closed."""
+        logger.info("Spider closed. Starting post-scrape tasks...")
+
+        # Load the data from CSV, deduplicate, and save again
+        df = pd.read_csv('data/bloomingdales_products.csv')
+
+        # Remove duplicates based on 'product_code'
+        df = df.drop_duplicates(subset='product_code')
+
+        # Overwrite CSV and Excel files
+        df.to_csv('data/bloomingdales_products.csv', index=False)
+        df.to_excel('data/bloomingdales_products.xlsx', index=False)
+
+        logger.info("CSV and Excel files saved successfully without duplicates.")

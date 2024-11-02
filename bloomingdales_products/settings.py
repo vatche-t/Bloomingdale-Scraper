@@ -11,7 +11,7 @@ BOT_NAME = "bloomingdales_products"
 
 SPIDER_MODULES = ["bloomingdales_products.spiders"]
 NEWSPIDER_MODULE = "bloomingdales_products.spiders"
-
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 #USER_AGENT = "bloomingdales_products (+http://www.yourdomain.com)"
@@ -59,6 +59,17 @@ ROBOTSTXT_OBEY = True
 #EXTENSIONS = {
 #    "scrapy.extensions.telnet.TelnetConsole": None,
 #}
+ROBOTSTXT_OBEY = False
+COOKIES_ENABLED = False
+
+DEFAULT_REQUEST_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en",
+    "Referer": "https://www.bloomingdales.com/",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "DNT": "1",  # Do Not Track
+}
 
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
