@@ -5,6 +5,8 @@ from loguru import logger
 import os
 import random
 import re  # Import regex for text parsing
+from scrapy import signals
+from pydispatch import dispatcher
 
 # Configure logging with Loguru
 logger.add("logs/scraper.log", rotation="1 MB", level="DEBUG")
@@ -13,6 +15,10 @@ logger.info("Starting the Bloomingdale's scraper...")
 class BloomingdalesSpider(scrapy.Spider):
     name = "bloomingdales"
     allowed_domains = ["bloomingdales.com"]
+
+    # Ensure the data directory exists
+    if not os.path.exists('data'):
+        os.makedirs('data')
 
     # Main URLs to start scraping (Designer Brands only)
     start_urls = [
@@ -65,41 +71,33 @@ class BloomingdalesSpider(scrapy.Spider):
         else:
             total_products = 0
 
-        # Process each product on the brand page
+        logger.info(f"Total products listed for {brand_name}: {total_products}")
+
+        # Scrape products on the current page
+        product_elements = response.css('#app-wrapper > div > div:nth-child(3) > ul > li')
+        scraped_products_count = len(product_elements)
+        logger.info(f"Scraped {scraped_products_count} products on current page for {brand_name}")
+
+        # Check if there are zero products; if so, skip pagination and go to the next brand
+        if scraped_products_count == 0:
+            logger.warning(f"No products found on page {response.url} for {brand_name}. Moving to the next brand.")
+            return  # Skip pagination and move to the next brand
+
+        # Scrape each product on the current page
         for product in product_elements:
             product_url = product.css('div.product-description.margin-top-xxs div:nth-child(1) a::attr(href)').get()
             product_name = product.css('div.product-description.margin-top-xxs div:nth-child(1) a div.product-name::text').get()
 
-            # Check if the "Best Seller" text exists inside the specific class
             bestseller_selector = product.css('div.eyebrow.flexText::text').get()
             best_seller_status = True if bestseller_selector and "Best Seller" in bestseller_selector else False
 
-            # Extract the star rating and review count from fieldset's aria-label
             rating_info = product.css('div.reviewlet-spacing div fieldset::attr(aria-label)').get()
-            if rating_info:
-                stars, reviews = self.extract_rating_and_reviews(rating_info)
-            else:
-                stars, reviews = None, None
+            stars, reviews = self.extract_rating_and_reviews(rating_info) if rating_info else (None, None)
 
-            # Use CSS for the image URL (First attempt)
             image_url = product.css('div.v-scroller ul li.active img::attr(data-src)').get()
-
-            # If image URL is missing, try different selectors (Fallbacks)
             if not image_url:
                 image_url = self.extract_image_url(product, response)
 
-            if not image_url:
-                image_url = product.css('div.v-scroller ul li.active picture source:nth-child(1)::attr(srcset)').get()
-
-            if not image_url:
-                image_url = product.css('div.v-scroller ul li.active img::attr(src)').get()
-
-            if not image_url:
-                logger.warning(f"No image URL found for product: {product_name} at {product_url}")
-            else:
-                logger.info(f"Found image URL for product: {product_name} -> {image_url}")
-
-            # Extract price details using get_price method
             full_price, discounted_price = self.get_price(product)
             product_code = product_url.split("?ID=")[1].split("&")[0] if product_url else None
 
@@ -111,11 +109,11 @@ class BloomingdalesSpider(scrapy.Spider):
                     'product_code': product_code,
                     'country_code': 'USA',
                     'currency_code': 'USD',
-                    'full_price': full_price if full_price else None,
-                    'price': discounted_price if discounted_price else None,
-                    'category1_code': stars,  # Star rating
-                    'category2_code': reviews,  # Number of reviews
-                    'category3_code': best_seller_status,  # Bestseller status (True/False)
+                    'full_price': full_price,
+                    'price': discounted_price,
+                    'category1_code': stars,
+                    'category2_code': reviews,
+                    'category3_code': best_seller_status,
                     'title': product_name.strip() if product_name else None,
                     'imageurl': image_url,
                     'itemurl': response.urljoin(product_url)
@@ -134,14 +132,41 @@ class BloomingdalesSpider(scrapy.Spider):
         else:
             logger.info(f"Reached the maximum of 7 pages for {brand_name}. Moving to the next brand.")
 
+
+
+    def extract_image_url(self, product, response):
+        selectors = [
+            'picture.main-picture > img::attr(src)',
+            'picture.main-picture > source::attr(srcset)',
+            '//picture[@class="main-picture"]/img/@src',
+            '//picture[@class="main-picture"]/source[1]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(max-width: 599px)"]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 600px) and (max-width: 1023px)"]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 1024px) and (max-width: 1279px)"]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 1280px) and (max-width: 1599px)"]/@srcset',
+            '//div[@class="picture-container"]/picture/source[@media="(min-width: 1600px)"]/@srcset',
+            '#product-thumbnail-5096784 > a > div > div > div > div > div > div.v-scroller > ul > li.active.cell.small-12.slideshow-item > div > picture > img::attr(src)',
+            '/html/body/div[3]/main/div/div[3]/ul/li[1]/div/div/div[1]/div/a/div/div/div/div/div/div[2]/ul/li[2]/div/picture/img/@src',
+            '/html/body/div[3]/main/div/div[3]/ul/li[1]/div/div/div[1]/div/a/div/div/div/div/div/div[2]/ul/li[2]/div/picture/source[2]/@srcset',
+            '#product-thumbnail-5096784 > a > div > div > div > div > div > div.v-scroller > ul > li.active.cell.small-12.slideshow-item > div > picture > source:nth-child(2)::attr(srcset)',
+            '/html/body/div[3]/main/div/div[3]/ul/li[1]/div/div/div[1]/div/a/div/div/div/div/div/div[2]/ul/li[2]/div/picture/source[1]/@srcset'
+        ]
+        image_url = None
+        for selector in selectors:
+            if '::attr' in selector:
+                image_url = response.css(selector).get()
+            else:
+                image_url = response.xpath(selector).get()
+            if image_url:
+                logger.info(f"Image URL found: {image_url}")
+                break
+        return image_url
+
     def extract_rating_and_reviews(self, rating_text):
-        """Extract star rating and review count from the aria-label text."""
         pattern = re.compile(r"Rated (\d+\.?\d*) stars with (\d+) reviews")
         match = pattern.search(rating_text)
         if match:
-            stars = float(match.group(1))
-            reviews = int(match.group(2))
-            return stars, reviews
+            return float(match.group(1)), int(match.group(2))
         return None, None
 
     def get_price(self, product):
