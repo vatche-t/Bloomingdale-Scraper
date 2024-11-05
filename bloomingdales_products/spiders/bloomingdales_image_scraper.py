@@ -39,13 +39,15 @@ class BloomingdalesImageScraper(scrapy.Spider):
             logger.info(f"Loaded Excel file with {len(self.df)} total products.")
         except Exception as e:
             logger.error(f"Error loading Excel file: {e}")
-            self.df = pd.DataFrame()  # Ensure self.df is always a DataFrame
+            self.df = pd.DataFrame()
 
         # Filter products to scrape based on missing image URLs
         self.products_to_scrape = self.df[self.df['imageurl'].isnull() | self.df['imageurl'].eq('')]
+
+        # Limit to the first 500 rows for testing
+        self.products_to_scrape = self.products_to_scrape.head(500)
         logger.info(f"Found {len(self.products_to_scrape)} products without an image URL to scrape.")
 
-        # Create updated folder to save the final results if it doesn't exist
         if not os.path.exists('data/updated'):
             os.makedirs('data/updated')
 
@@ -59,7 +61,7 @@ class BloomingdalesImageScraper(scrapy.Spider):
         for index, row in self.products_to_scrape.iterrows():
             product_url = row['itemurl']
             product_code = row['product_code']
-            
+
             logger.debug(f"Processing product: {product_code}, URL: {product_url}")
 
             if not product_url.startswith('http'):
@@ -95,7 +97,8 @@ class BloomingdalesImageScraper(scrapy.Spider):
             '//div[@class="picture-container"]/picture/source[@media="(min-width: 1280px) and (max-width: 1599px)"]/@srcset',
             '//div[@class="picture-container"]/picture/source[@media="(min-width: 1600px)"]/@srcset',
         ]
-        image_urls = self.extract_images(response, selectors)
+        
+        age_urls = self.extract_images(response, selectors)
 
         if not image_urls:
             logger.warning(f"No image URLs found for product {product_code}. Retrying after 10 seconds...")
@@ -148,7 +151,7 @@ class BloomingdalesImageScraper(scrapy.Spider):
             missing_image_urls_df = updated_df[updated_df['imageurl'].isnull() | updated_df['imageurl'].eq('')]
 
             if not missing_image_urls_df.empty:
-                logger.warning(f"Found {len(missing_image_urls_df)} products with missing image URLs after first run. Retrying...")
+                logger.warning(f"Found {len(missing_image_urls_df)} products with missing image URLs. Retrying...")
                 self.products_to_scrape = missing_image_urls_df
                 process.crawl(BloomingdalesImageScraper)
                 process.start(stop_after_crawl=False)
