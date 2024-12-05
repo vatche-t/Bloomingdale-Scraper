@@ -116,3 +116,6 @@ After the spider finishes, check the `data/` directory for the output Excel file
 
 Feel free to contribute to this project by submitting issues or pull requests. Any improvements or additional features are welcome!
 
+
+
+Last updated on: 2024-12-05
